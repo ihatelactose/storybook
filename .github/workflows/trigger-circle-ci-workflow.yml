@@ -2,20 +2,63 @@ name: Trigger CircleCI workflow
 
 on:
   pull_request:
-    types: [labeled]
+    types: [opened, synchronize, labeled, unlabeled, reopened, converted_to_draft, ready_for_review]
+  push:
 
 jobs:
-  trigger:
-    if: github.event.label.name == 'run e2e extended test suite' && github.event.pull_request.head.repo.fork == false
-    name: Run workflow with all e2e tests
+  trigger-ci-tests:
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
     steps:
-      - name: Make request to CircleCI
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+      - name: Trigger draft PR tests
         run: >
-          curl --request POST
-          --url https://circleci.com/api/v2/project/gh/storybookjs/storybook/pipeline
-          --header 'Circle-Token: '"$CIRCLE_CI_TOKEN"' '
-          --header 'content-type: application/json'
-          --data '{"branch":"${{ github.event.pull_request.head.ref }}"}'
+          npx trigger-circleci-pipeline --org storybookjs --project storybook \
+            --branch "${{ github.event.pull_request.head.ref }}" \
+            --parameters workflow=ci
         env:
-          CIRCLE_CI_TOKEN: ${{ secrets.CIRCLE_CI_TOKEN }}
+          CIRCLE_CI_API_TOKEN: ${{ secrets.CIRCLE_CI_TOKEN }}
+  trigger-pr-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && (github.event.pull_request.draft == false || contains(github.event.pull_request.labels.*.name, 'ci:pr') && !contains(github.event.pull_request.labels.*.name, 'ci:merged') && !contains(github.event.pull_request.labels.*.name, 'ci:daily'))
+    steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+      - name: Trigger PR tests
+        run: >
+          npx trigger-circleci-pipeline --org storybookjs --project storybook \
+            --branch "${{ github.event.pull_request.head.ref }}" \
+            --parameters workflow=pr
+        env:
+          CIRCLE_CI_API_TOKEN: ${{ secrets.CIRCLE_CI_TOKEN }}
+  trigger-merged-tests:
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && github.ref_name == 'kasper/debug-ci') || (contains(github.event.pull_request.labels.*.name, 'ci:merged') && !contains(github.event.pull_request.labels.*.name, 'ci:daily'))
+    steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+      - name: Trigger merged tests
+        run: >
+          npx trigger-circleci-pipeline --org storybookjs --project storybook \
+            --branch "${{ github.event.pull_request.head.ref || github.ref_name }}" \
+            --parameters workflow=merged
+        env:
+          CIRCLE_CI_API_TOKEN: ${{ secrets.CIRCLE_CI_TOKEN }}
+  trigger-daily-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:daily')
+    steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+      - name: Trigger the daily tests
+        run: >
+          npx trigger-circleci-pipeline --org storybookjs --project storybook \
+            --branch "${{ github.event.pull_request.head.ref }}" \
+            --parameters workflow=daily
+        env:
+          CIRCLE_CI_API_TOKEN: ${{ secrets.CIRCLE_CI_TOKEN }}
